@@ -1,6 +1,11 @@
 import { YoutubeTranscript } from "youtube-transcript-plus";
 
-export async function getTranscript(url: string): Promise<string> {
+export interface TranscriptResult {
+  text: string;
+  lang: string | null;
+}
+
+export async function getTranscript(url: string): Promise<TranscriptResult> {
   try {
     const segments = await YoutubeTranscript.fetchTranscript(url, {
       lang: "en",
@@ -16,7 +21,9 @@ export async function getTranscript(url: string): Promise<string> {
       throw new Error("Transcript is empty.");
     }
 
-    return text;
+    const lang = segments[0]?.lang ?? null;
+
+    return { text, lang };
   } catch (err: unknown) {
     const message =
       err instanceof Error ? err.message : "Unknown error fetching transcript.";
