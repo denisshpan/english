@@ -4,17 +4,31 @@ import { useState, useTransition } from "react";
 import { generateLessonAction } from "@/app/actions";
 import type { Lesson, ActionResult } from "@/lib/schema";
 
+function isValidYouTubeUrl(url: string): boolean {
+  return /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+/.test(
+    url.trim()
+  );
+}
+
 export function InputCard({
   onResult,
 }: {
   onResult: (data: Lesson) => void;
 }) {
+  const [url, setUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+
+  const canSubmit = url.trim().length > 0 && !isPending;
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
+
+    if (!isValidYouTubeUrl(url)) {
+      setError("Please enter a valid YouTube URL (youtube.com or youtu.be).");
+      return;
+    }
 
     const formData = new FormData(e.currentTarget);
 
@@ -36,19 +50,25 @@ export function InputCard({
       <p className="mb-6 text-sm text-gray-400">
         Paste a YouTube link to generate a B1–B2 English lesson instantly.
       </p>
+
       <form onSubmit={handleSubmit} className="flex gap-3">
         <input
           name="url"
           type="url"
           required
+          value={url}
+          onChange={(e) => {
+            setUrl(e.target.value);
+            if (error) setError(null);
+          }}
           placeholder="https://www.youtube.com/watch?v=..."
-          className="flex-1 rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-sm text-gray-100 placeholder-gray-500 outline-none transition-colors focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+          className="flex-1 rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-sm text-gray-100 placeholder-gray-500 outline-none transition-colors focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
           disabled={isPending}
         />
         <button
           type="submit"
-          disabled={isPending}
-          className="rounded-xl bg-indigo-600 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={!canSubmit}
+          className="rounded-xl bg-indigo-600 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {isPending ? (
             <span className="flex items-center gap-2">
@@ -60,6 +80,7 @@ export function InputCard({
           )}
         </button>
       </form>
+
       {error && (
         <div className="mt-4 rounded-xl border border-red-800/50 bg-red-900/20 px-4 py-3 text-sm text-red-400">
           {error}
