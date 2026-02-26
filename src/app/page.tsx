@@ -3,19 +3,14 @@
 import { useState } from "react";
 import { InputCard } from "@/components/InputCard";
 import { OutputTabs } from "@/components/OutputTabs";
-import { DEFAULT_OPTIONS, type Lesson, type LessonOptions } from "@/lib/schema";
+import { type Lesson, type LessonOptions } from "@/lib/schema";
+import { LANG_NAMES } from "@/lib/constants";
 
 interface LessonState {
   lesson: Lesson;
   options: LessonOptions;
   detectedLang: string | null;
 }
-
-const LANG_NAMES: Record<string, string> = {
-  en: "English", es: "Spanish", fr: "French", de: "German",
-  it: "Italian", pt: "Portuguese", ru: "Russian", zh: "Chinese",
-  ja: "Japanese", ko: "Korean", ar: "Arabic", nl: "Dutch",
-};
 
 export default function Home() {
   const [state, setState] = useState<LessonState | null>(null);

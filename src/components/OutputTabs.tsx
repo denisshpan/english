@@ -1,19 +1,21 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import type { Lesson, LessonOptions } from "@/lib/schema";
+import type { Lesson, LessonOptions, TabKey } from "@/lib/schema";
 import { ResultBlock } from "./ResultBlock";
+import { Spinner } from "./ui/Spinner";
+import { CopyIcon, CheckIcon, FileIcon } from "./ui/Icons";
 
-const TABS = [
-  { key: "summary" as const, label: "Summary" },
-  { key: "vocabulary" as const, label: "Vocabulary" },
-  { key: "questions" as const, label: "Questions" },
-  { key: "gapFill" as const, label: "Gap Fill" },
+const TABS: { key: TabKey; label: string }[] = [
+  { key: "summary", label: "Summary" },
+  { key: "vocabulary", label: "Vocabulary" },
+  { key: "questions", label: "Questions" },
+  { key: "gapFill", label: "Gap Fill" },
 ];
 
 function formatForCopy(
   data: Lesson,
-  tab: (typeof TABS)[number]["key"],
+  tab: TabKey,
   showGapFillAnswers: boolean
 ): string {
   switch (tab) {
@@ -36,10 +38,11 @@ function formatForCopy(
 }
 
 export function OutputTabs({ data, options }: { data: Lesson; options: LessonOptions }) {
-  const [activeTab, setActiveTab] = useState<(typeof TABS)[number]["key"]>("summary");
+  const [activeTab, setActiveTab] = useState<TabKey>("summary");
   const [copied, setCopied] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
   const [exportingDocx, setExportingDocx] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const handleCopy = useCallback(async () => {
     const text = formatForCopy(data, activeTab, options.showGapFillAnswers);
@@ -48,52 +51,65 @@ export function OutputTabs({ data, options }: { data: Lesson; options: LessonOpt
     setTimeout(() => setCopied(false), 1500);
   }, [data, activeTab, options.showGapFillAnswers]);
 
-  async function triggerExport(
-    endpoint: string,
-    filename: string,
-    setLoading: (v: boolean) => void
-  ) {
-    setLoading(true);
-    try {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lesson: data, options }),
-      });
-      if (!response.ok) throw new Error("Export failed");
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch {
-      alert(`Failed to export ${filename}. Please try again.`);
-    } finally {
-      setLoading(false);
-    }
-  }
+  const triggerExport = useCallback(
+    async (endpoint: string, filename: string, setLoading: (v: boolean) => void) => {
+      setLoading(true);
+      setExportError(null);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30_000);
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ lesson: data, options }),
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("Export failed");
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        const message =
+          err instanceof Error && err.name === "AbortError"
+            ? "Export timed out. Please try again."
+            : `Failed to export ${filename}. Please try again.`;
+        setExportError(message);
+      } finally {
+        clearTimeout(timeoutId);
+        setLoading(false);
+      }
+    },
+    [data, options]
+  );
 
   const handleExportPdf = useCallback(
     () => triggerExport("/api/export", "esl-lesson.pdf", setExportingPdf),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [data, options]
+    [triggerExport]
   );
 
   const handleExportDocx = useCallback(
     () => triggerExport("/api/export-docx", "esl-lesson.docx", setExportingDocx),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [data, options]
+    [triggerExport]
   );
 
   return (
     <div className="mt-8 w-full max-w-3xl rounded-2xl border border-gray-800 bg-gray-900 p-6">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <nav className="flex gap-1 rounded-xl border border-gray-800 bg-gray-950 p-1">
+        <nav
+          role="tablist"
+          aria-label="Lesson sections"
+          className="flex gap-1 rounded-xl border border-gray-800 bg-gray-950 p-1"
+        >
           {TABS.map((tab) => (
             <button
               key={tab.key}
+              id={`tab-${tab.key}`}
+              role="tab"
+              aria-selected={activeTab === tab.key}
               onClick={() => { setActiveTab(tab.key); setCopied(false); }}
               className={`rounded-lg px-4 py-1.5 text-sm font-medium transition-all duration-150 ${
                 activeTab === tab.key
@@ -109,6 +125,7 @@ export function OutputTabs({ data, options }: { data: Lesson; options: LessonOpt
         <div className="flex items-center gap-2">
           <button
             onClick={handleCopy}
+            aria-label="Copy current tab content"
             className="flex items-center gap-1.5 rounded-lg border border-gray-700 bg-gray-800 px-3 py-1.5 text-xs font-medium text-gray-300 transition-all hover:border-gray-600 hover:text-white"
           >
             {copied ? <CheckIcon /> : <CopyIcon />}
@@ -118,61 +135,50 @@ export function OutputTabs({ data, options }: { data: Lesson; options: LessonOpt
           <button
             onClick={handleExportPdf}
             disabled={exportingPdf}
+            aria-label="Export as PDF"
+            aria-busy={exportingPdf}
             className="flex items-center gap-1.5 rounded-lg border border-gray-700 bg-gray-800 px-3 py-1.5 text-xs font-medium text-gray-300 transition-all hover:border-gray-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {exportingPdf ? <Spinner /> : <FileIcon />}
+            {exportingPdf ? <Spinner className="h-3 w-3" /> : <FileIcon />}
             {exportingPdf ? "Exporting..." : "PDF"}
           </button>
 
           <button
             onClick={handleExportDocx}
             disabled={exportingDocx}
+            aria-label="Export as DOCX"
+            aria-busy={exportingDocx}
             className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white transition-all hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {exportingDocx ? <Spinner /> : <FileIcon />}
+            {exportingDocx ? <Spinner className="h-3 w-3" /> : <FileIcon />}
             {exportingDocx ? "Exporting..." : "DOCX"}
           </button>
         </div>
       </div>
 
-      <div className="border-t border-gray-800 pt-5">
+      {exportError && (
+        <div
+          role="alert"
+          className="mb-4 flex items-center justify-between rounded-xl border border-red-800/50 bg-red-900/20 px-4 py-3 text-sm text-red-400"
+        >
+          <span>{exportError}</span>
+          <button
+            onClick={() => setExportError(null)}
+            aria-label="Dismiss error"
+            className="ml-3 text-red-500 hover:text-red-300"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      <div
+        role="tabpanel"
+        aria-labelledby={`tab-${activeTab}`}
+        className="border-t border-gray-800 pt-5"
+      >
         <ResultBlock data={data} activeTab={activeTab} showGapFillAnswers={options.showGapFillAnswers} />
       </div>
     </div>
-  );
-}
-
-function CopyIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-    </svg>
-  );
-}
-
-function CheckIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="20 6 9 17 4 12" />
-    </svg>
-  );
-}
-
-function FileIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <polyline points="14 2 14 8 20 8" />
-    </svg>
-  );
-}
-
-function Spinner() {
-  return (
-    <svg className="h-3 w-3 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-    </svg>
   );
 }

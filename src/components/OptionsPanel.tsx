@@ -32,13 +32,14 @@ export function OptionsPanel({
         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
           Level
         </p>
-        <div className="flex gap-2">
+        <div role="group" aria-label="Level" className="flex gap-2">
           {LEVELS.map((l) => (
             <button
               key={l.value}
               type="button"
               onClick={() => set("level", l.value)}
               title={l.desc}
+              aria-pressed={options.level === l.value}
               className={`flex-1 rounded-lg border px-3 py-2 text-xs font-semibold transition-all ${
                 options.level === l.value
                   ? "border-indigo-500 bg-indigo-600 text-white"
@@ -55,12 +56,13 @@ export function OptionsPanel({
         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
           Output style
         </p>
-        <div className="flex flex-col gap-1.5 sm:flex-row">
+        <div role="group" aria-label="Output style" className="flex flex-col gap-1.5 sm:flex-row">
           {STYLES.map((s) => (
             <button
               key={s.value}
               type="button"
               onClick={() => set("style", s.value)}
+              aria-pressed={options.style === s.value}
               className={`flex-1 rounded-lg border px-3 py-2 text-left transition-all sm:text-center ${
                 options.style === s.value
                   ? "border-indigo-500 bg-indigo-600/20 text-indigo-300"
@@ -87,14 +89,15 @@ export function OptionsPanel({
           type="button"
           role="switch"
           aria-checked={options.showGapFillAnswers}
+          aria-label="Show answers in Gap Fill"
           onClick={() => set("showGapFillAnswers", !options.showGapFillAnswers)}
           className={`relative h-6 w-11 rounded-full transition-colors ${
             options.showGapFillAnswers ? "bg-indigo-600" : "bg-gray-700"
           }`}
         >
           <span
-            className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
-              options.showGapFillAnswers ? "translate-x-5" : "translate-x-0.5"
+            className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+              options.showGapFillAnswers ? "translate-x-5" : "translate-x-0"
             }`}
           />
         </button>

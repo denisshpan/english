@@ -2,17 +2,10 @@
 
 import { useState, useTransition } from "react";
 import { generateLessonAction } from "@/app/actions";
-import {
-  DEFAULT_OPTIONS,
-  type Lesson,
-  type LessonOptions,
-  type ActionResult,
-} from "@/lib/schema";
+import { DEFAULT_OPTIONS, type Lesson, type LessonOptions, type ActionResult } from "@/lib/schema";
+import { isValidYouTubeUrl } from "@/lib/validation";
 import { OptionsPanel } from "./OptionsPanel";
-
-function isValidYouTubeUrl(url: string): boolean {
-  return /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+/.test(url.trim());
-}
+import { Spinner } from "./ui/Spinner";
 
 export function InputCard({
   onResult,
@@ -74,12 +67,16 @@ export function InputCard({
               if (error) setError(null);
             }}
             placeholder="https://www.youtube.com/watch?v=..."
+            aria-label="YouTube URL"
+            aria-describedby={error ? "url-error" : undefined}
+            aria-invalid={!!error}
             className="flex-1 rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-sm text-gray-100 placeholder-gray-500 outline-none transition-colors focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
             disabled={isPending}
           />
           <button
             type="submit"
             disabled={!canSubmit}
+            aria-busy={isPending}
             className="rounded-xl bg-indigo-600 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {isPending ? (
@@ -97,19 +94,14 @@ export function InputCard({
       </form>
 
       {error && (
-        <div className="mt-4 rounded-xl border border-red-800/50 bg-red-900/20 px-4 py-3 text-sm text-red-400">
+        <div
+          id="url-error"
+          role="alert"
+          className="mt-4 rounded-xl border border-red-800/50 bg-red-900/20 px-4 py-3 text-sm text-red-400"
+        >
           {error}
         </div>
       )}
     </div>
-  );
-}
-
-function Spinner() {
-  return (
-    <svg className="h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-    </svg>
   );
 }

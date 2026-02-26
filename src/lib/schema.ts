@@ -35,6 +35,8 @@ export const DEFAULT_OPTIONS: LessonOptions = {
   showGapFillAnswers: true,
 };
 
+export type TabKey = "summary" | "vocabulary" | "questions" | "gapFill";
+
 export type ActionResult =
   | { success: true; data: Lesson; detectedLang: string | null; options: LessonOptions }
   | { success: false; error: string };
