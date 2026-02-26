@@ -2,20 +2,25 @@
 
 import { useState, useTransition } from "react";
 import { generateLessonAction } from "@/app/actions";
-import type { Lesson, ActionResult } from "@/lib/schema";
+import {
+  DEFAULT_OPTIONS,
+  type Lesson,
+  type LessonOptions,
+  type ActionResult,
+} from "@/lib/schema";
+import { OptionsPanel } from "./OptionsPanel";
 
 function isValidYouTubeUrl(url: string): boolean {
-  return /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+/.test(
-    url.trim()
-  );
+  return /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+/.test(url.trim());
 }
 
 export function InputCard({
   onResult,
 }: {
-  onResult: (data: Lesson) => void;
+  onResult: (data: Lesson, options: LessonOptions, detectedLang: string | null) => void;
 }) {
   const [url, setUrl] = useState("");
+  const [options, setOptions] = useState<LessonOptions>(DEFAULT_OPTIONS);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -30,12 +35,16 @@ export function InputCard({
       return;
     }
 
-    const formData = new FormData(e.currentTarget);
+    const formData = new FormData();
+    formData.set("url", url.trim());
+    formData.set("level", options.level);
+    formData.set("style", options.style);
+    formData.set("showGapFillAnswers", String(options.showGapFillAnswers));
 
     startTransition(async () => {
       const result: ActionResult = await generateLessonAction(formData);
       if (result.success) {
-        onResult(result.data);
+        onResult(result.data, result.options, result.detectedLang);
       } else {
         setError(result.error);
       }
@@ -45,40 +54,46 @@ export function InputCard({
   return (
     <div className="w-full max-w-3xl rounded-2xl border border-gray-800 bg-gray-900 p-6">
       <h1 className="mb-1 text-2xl font-bold text-white">
-        YouTube → ESL Lesson
+        YouTube &rarr; ESL Lesson
       </h1>
       <p className="mb-6 text-sm text-gray-400">
-        Paste a YouTube link to generate a B1–B2 English lesson instantly.
+        Paste a YouTube link to generate a{" "}
+        <span className="font-medium text-indigo-400">{options.level}</span>{" "}
+        English lesson instantly.
       </p>
 
-      <form onSubmit={handleSubmit} className="flex gap-3">
-        <input
-          name="url"
-          type="url"
-          required
-          value={url}
-          onChange={(e) => {
-            setUrl(e.target.value);
-            if (error) setError(null);
-          }}
-          placeholder="https://www.youtube.com/watch?v=..."
-          className="flex-1 rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-sm text-gray-100 placeholder-gray-500 outline-none transition-colors focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
-          disabled={isPending}
-        />
-        <button
-          type="submit"
-          disabled={!canSubmit}
-          className="rounded-xl bg-indigo-600 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          {isPending ? (
-            <span className="flex items-center gap-2">
-              <Spinner />
-              Generating…
-            </span>
-          ) : (
-            "Generate Lesson"
-          )}
-        </button>
+      <form onSubmit={handleSubmit}>
+        <div className="flex gap-3">
+          <input
+            name="url"
+            type="url"
+            required
+            value={url}
+            onChange={(e) => {
+              setUrl(e.target.value);
+              if (error) setError(null);
+            }}
+            placeholder="https://www.youtube.com/watch?v=..."
+            className="flex-1 rounded-xl border border-gray-700 bg-gray-800 px-4 py-3 text-sm text-gray-100 placeholder-gray-500 outline-none transition-colors focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
+            disabled={isPending}
+          />
+          <button
+            type="submit"
+            disabled={!canSubmit}
+            className="rounded-xl bg-indigo-600 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {isPending ? (
+              <span className="flex items-center gap-2">
+                <Spinner />
+                Generating&hellip;
+              </span>
+            ) : (
+              "Generate Lesson"
+            )}
+          </button>
+        </div>
+
+        <OptionsPanel options={options} onChange={setOptions} />
       </form>
 
       {error && (
@@ -92,25 +107,9 @@ export function InputCard({
 
 function Spinner() {
   return (
-    <svg
-      className="h-4 w-4 animate-spin"
-      xmlns="http://www.w3.org/2000/svg"
-      fill="none"
-      viewBox="0 0 24 24"
-    >
-      <circle
-        className="opacity-25"
-        cx="12"
-        cy="12"
-        r="10"
-        stroke="currentColor"
-        strokeWidth="4"
-      />
-      <path
-        className="opacity-75"
-        fill="currentColor"
-        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-      />
+    <svg className="h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
     </svg>
   );
 }

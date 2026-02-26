@@ -2,7 +2,32 @@
 
 import { getTranscript } from "@/lib/youtube";
 import { generateLesson } from "@/lib/openai";
-import type { ActionResult } from "@/lib/schema";
+import {
+  DEFAULT_OPTIONS,
+  type ActionResult,
+  type LessonLevel,
+  type LessonOptions,
+  type OutputStyle,
+} from "@/lib/schema";
+
+const VALID_LEVELS: LessonLevel[] = ["A2", "B1", "B2", "C1"];
+const VALID_STYLES: OutputStyle[] = ["teacher", "exam", "conversation"];
+
+function parseOptions(formData: FormData): LessonOptions {
+  const level = formData.get("level");
+  const style = formData.get("style");
+  const showGapFillAnswers = formData.get("showGapFillAnswers");
+
+  return {
+    level: VALID_LEVELS.includes(level as LessonLevel)
+      ? (level as LessonLevel)
+      : DEFAULT_OPTIONS.level,
+    style: VALID_STYLES.includes(style as OutputStyle)
+      ? (style as OutputStyle)
+      : DEFAULT_OPTIONS.style,
+    showGapFillAnswers: showGapFillAnswers !== "false",
+  };
+}
 
 export async function generateLessonAction(
   formData: FormData
@@ -19,10 +44,12 @@ export async function generateLessonAction(
     return { success: false, error: "Please enter a valid YouTube URL." };
   }
 
+  const options = parseOptions(formData);
+
   try {
-    const transcript = await getTranscript(trimmed);
-    const lesson = await generateLesson(transcript);
-    return { success: true, data: lesson };
+    const { text, lang } = await getTranscript(trimmed);
+    const lesson = await generateLesson(text, options);
+    return { success: true, data: lesson, detectedLang: lang, options };
   } catch (err: unknown) {
     const message =
       err instanceof Error ? err.message : "An unexpected error occurred.";

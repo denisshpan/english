@@ -1,14 +1,19 @@
 import OpenAI from "openai";
-import { LessonSchema, type Lesson } from "./schema";
+import { LessonSchema, type Lesson, type LessonOptions } from "./schema";
 import {
-  SYSTEM_PROMPT,
+  buildSystemPrompt,
   buildLessonPrompt,
-  buildSummarizePrompt,
+  buildChunkSummarizePrompt,
+  buildMergeSummarizePrompt,
+  buildFinalSummarizePrompt,
   buildRepairPrompt,
 } from "./prompts";
 
 const MODEL = "gpt-4o-mini";
-const MAX_TRANSCRIPT_WORDS = 4000;
+const MAX_WORDS_BEFORE_SUMMARIZE = 4000;
+const CHUNK_SIZE_WORDS = 3000;
+const CHUNK_OVERLAP_WORDS = 150;
+const MAX_MERGED_WORDS = 2000;
 
 function getClient(): OpenAI {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -20,42 +25,94 @@ function countWords(text: string): number {
   return text.split(/\s+/).filter(Boolean).length;
 }
 
+export function chunkText(
+  text: string,
+  chunkSizeWords: number,
+  overlapWords: number
+): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length <= chunkSizeWords) return [text];
+
+  const chunks: string[] = [];
+  let start = 0;
+  while (start < words.length) {
+    const end = Math.min(start + chunkSizeWords, words.length);
+    chunks.push(words.slice(start, end).join(" "));
+    if (end === words.length) break;
+    start += chunkSizeWords - overlapWords;
+  }
+  return chunks;
+}
+
+async function callChat(
+  client: OpenAI,
+  systemContent: string,
+  userContent: string,
+  jsonMode = false
+): Promise<string> {
+  const response = await client.chat.completions.create({
+    model: MODEL,
+    messages: [
+      { role: "system", content: systemContent },
+      { role: "user", content: userContent },
+    ],
+    temperature: jsonMode ? 0.4 : 0.3,
+    max_tokens: jsonMode ? 4000 : 3000,
+    ...(jsonMode ? { response_format: { type: "json_object" as const } } : {}),
+  });
+  return response.choices[0]?.message?.content?.trim() ?? "";
+}
+
 async function summarizeTranscript(
   client: OpenAI,
   transcript: string
 ): Promise<string> {
-  const response = await client.chat.completions.create({
-    model: MODEL,
-    messages: [
-      {
-        role: "system",
-        content: "You are a helpful assistant that summarizes text concisely.",
-      },
-      { role: "user", content: buildSummarizePrompt(transcript) },
-    ],
-    temperature: 0.3,
-    max_tokens: 3000,
-  });
+  const chunks = chunkText(transcript, CHUNK_SIZE_WORDS, CHUNK_OVERLAP_WORDS);
 
-  return response.choices[0]?.message?.content?.trim() ?? "";
+  let condensed: string;
+
+  if (chunks.length === 1) {
+    condensed = await callChat(
+      client,
+      "You are a helpful assistant that summarizes text concisely.",
+      buildFinalSummarizePrompt(transcript)
+    );
+  } else {
+    const chunkSummaries = await Promise.all(
+      chunks.map((chunk, i) =>
+        callChat(
+          client,
+          "You are a helpful assistant that summarizes text concisely.",
+          buildChunkSummarizePrompt(chunk, i, chunks.length)
+        )
+      )
+    );
+
+    const merged = chunkSummaries.join("\n\n---\n\n");
+    condensed = await callChat(
+      client,
+      "You are a helpful assistant that synthesizes information clearly.",
+      buildMergeSummarizePrompt(merged)
+    );
+  }
+
+  if (countWords(condensed) > MAX_MERGED_WORDS) {
+    condensed = await callChat(
+      client,
+      "You are a helpful assistant that summarizes text concisely.",
+      buildFinalSummarizePrompt(condensed)
+    );
+  }
+
+  return condensed;
 }
 
 async function requestLesson(
   client: OpenAI,
+  options: LessonOptions,
   userMessage: string
 ): Promise<string> {
-  const response = await client.chat.completions.create({
-    model: MODEL,
-    messages: [
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: userMessage },
-    ],
-    temperature: 0.4,
-    max_tokens: 4000,
-    response_format: { type: "json_object" },
-  });
-
-  return response.choices[0]?.message?.content?.trim() ?? "";
+  return callChat(client, buildSystemPrompt(options), userMessage, true);
 }
 
 function parseAndValidate(raw: string): Lesson {
@@ -63,30 +120,36 @@ function parseAndValidate(raw: string): Lesson {
   return LessonSchema.parse(json);
 }
 
-export async function generateLesson(transcript: string): Promise<Lesson> {
+export async function generateLesson(
+  transcript: string,
+  options: LessonOptions
+): Promise<Lesson> {
   const client = getClient();
 
   let text = transcript;
-  if (countWords(text) > MAX_TRANSCRIPT_WORDS) {
+  if (countWords(text) > MAX_WORDS_BEFORE_SUMMARIZE) {
     text = await summarizeTranscript(client, text);
   }
 
-  const firstAttempt = await requestLesson(client, buildLessonPrompt(text));
+  const firstAttempt = await requestLesson(
+    client,
+    options,
+    buildLessonPrompt(text)
+  );
 
   try {
     return parseAndValidate(firstAttempt);
   } catch {
     const repairAttempt = await requestLesson(
       client,
+      options,
       buildRepairPrompt(firstAttempt)
     );
 
     try {
       return parseAndValidate(repairAttempt);
     } catch {
-      throw new Error(
-        "Failed to generate a valid lesson. Please try again."
-      );
+      throw new Error("Failed to generate a valid lesson. Please try again.");
     }
   }
 }

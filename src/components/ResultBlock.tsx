@@ -7,9 +7,11 @@ type Tab = "summary" | "vocabulary" | "questions" | "gapFill";
 export function ResultBlock({
   data,
   activeTab,
+  showGapFillAnswers,
 }: {
   data: Lesson;
   activeTab: Tab;
+  showGapFillAnswers: boolean;
 }) {
   if (activeTab === "summary") {
     return <p className="leading-relaxed text-gray-300">{data.summary}</p>;
@@ -29,14 +31,9 @@ export function ResultBlock({
           </thead>
           <tbody>
             {data.vocabulary.map((item, i) => (
-              <tr
-                key={i}
-                className="border-b border-gray-800 text-gray-300"
-              >
+              <tr key={i} className="border-b border-gray-800 text-gray-300">
                 <td className="py-3 pr-4 text-gray-500">{i + 1}</td>
-                <td className="py-3 pr-4 font-semibold text-indigo-400">
-                  {item.word}
-                </td>
+                <td className="py-3 pr-4 font-semibold text-indigo-400">{item.word}</td>
                 <td className="py-3 pr-4">{item.meaning}</td>
                 <td className="py-3 italic text-gray-400">{item.example}</td>
               </tr>
@@ -51,9 +48,7 @@ export function ResultBlock({
     return (
       <ol className="list-decimal space-y-3 pl-5 text-gray-300">
         {data.questions.map((q, i) => (
-          <li key={i} className="leading-relaxed">
-            {q}
-          </li>
+          <li key={i} className="leading-relaxed">{q}</li>
         ))}
       </ol>
     );
@@ -64,9 +59,11 @@ export function ResultBlock({
       {data.gapFill.map((item, i) => (
         <li key={i}>
           <p className="leading-relaxed">{item.sentenceWithBlank}</p>
-          <p className="mt-1 text-sm text-indigo-400">
-            Answer: <span className="font-semibold">{item.answer}</span>
-          </p>
+          {showGapFillAnswers && (
+            <p className="mt-1 text-sm text-indigo-400">
+              Answer: <span className="font-semibold">{item.answer}</span>
+            </p>
+          )}
         </li>
       ))}
     </ol>
