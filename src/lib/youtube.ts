@@ -13,7 +13,7 @@ function buildTranscriptConfig(
 ): Parameters<typeof YoutubeTranscript.fetchTranscript>[1] {
   const proxy = process.env.YOUTUBE_TRANSCRIPT_PROXY;
 
-  console.log("[transcript] proxy configured:", proxy ? `yes (${proxy.replace(/:[^:@]+@/, ":***@")})` : "no");
+  console.log("[yt] proxy:", proxy ? `yes (${proxy.replace(/:[^:@]+@/, ":***@")})` : "no");
 
   if (!proxy) return base;
 
@@ -28,7 +28,13 @@ function buildTranscriptConfig(
     headers?: Record<string, string>;
   }) => {
     const { url, lang, userAgent, method = "GET", body, headers = {} } = params;
-    console.log("[transcript] fetch via proxy:", method, url.slice(0, 120));
+    const isPlayer = url.includes("/player");
+    console.log("[yt] fetch:", method, url.slice(0, 120));
+
+    if (isPlayer && body) {
+      console.log("[yt] player POST body:", body.slice(0, 1000));
+    }
+
     const start = Date.now();
     try {
       const res = await fetch(url, {
@@ -45,16 +51,20 @@ function buildTranscriptConfig(
 
       const cloned = res.clone();
       const text = await cloned.text();
-      console.log("[transcript] response:", res.status, res.statusText, `(${Date.now() - start}ms)`, "body length:", text.length);
-      console.log("[transcript] body preview:", text.slice(0, 500));
+      const ms = Date.now() - start;
+      console.log("[yt] response:", res.status, `(${ms}ms)`, "len:", text.length);
 
-      const hasConsent = text.includes("consent.youtube.com") || text.includes("CONSENT");
-      const hasCaptions = text.includes("captionTrack") || text.includes("timedtext");
-      console.log("[transcript] consent page?", hasConsent, "| has captions?", hasCaptions);
+      if (isPlayer) {
+        console.log("[yt] FULL player response:", text);
+      } else {
+        const hasCaptions = text.includes("captionTrack") || text.includes("timedtext");
+        console.log("[yt] video page has captions?", hasCaptions);
+        console.log("[yt] video page preview:", text.slice(0, 300));
+      }
 
       return res;
     } catch (fetchErr) {
-      console.error("[transcript] fetch error:", fetchErr);
+      console.error("[yt] fetch error:", fetchErr);
       throw fetchErr;
     }
   };
@@ -68,7 +78,7 @@ function buildTranscriptConfig(
 }
 
 export async function getTranscript(url: string): Promise<TranscriptResult> {
-  console.log("[transcript] getTranscript called for:", url);
+  console.log("[yt] getTranscript:", url);
 
   const attempts = [
     buildTranscriptConfig({ lang: "en" }),
@@ -80,29 +90,22 @@ export async function getTranscript(url: string): Promise<TranscriptResult> {
 
   for (const opts of attempts) {
     attemptIdx++;
-    console.log(`[transcript] attempt ${attemptIdx}/${attempts.length}, lang:`, (opts as { lang?: string }).lang ?? "any");
+    console.log(`[yt] attempt ${attemptIdx}/${attempts.length}, lang:`, (opts as { lang?: string }).lang ?? "any");
     try {
       const segments = await YoutubeTranscript.fetchTranscript(url, opts);
+      console.log("[yt] segments:", segments?.length ?? 0);
 
-      console.log("[transcript] segments received:", segments?.length ?? 0);
-
-      if (!segments || segments.length === 0) {
-        console.log("[transcript] no segments, trying next attempt");
-        continue;
-      }
+      if (!segments || segments.length === 0) continue;
 
       const text = segments.map((s) => s.text).join(" ");
-      if (!text.trim()) {
-        console.log("[transcript] segments empty text, trying next attempt");
-        continue;
-      }
+      if (!text.trim()) continue;
 
       const lang = segments[0]?.lang ?? null;
-      console.log("[transcript] success! lang:", lang, "chars:", text.length);
+      console.log("[yt] success! lang:", lang, "chars:", text.length);
       return { text, lang };
     } catch (err: unknown) {
       lastError = err instanceof Error ? err : new Error("Unknown error fetching transcript.");
-      console.error(`[transcript] attempt ${attemptIdx} error:`, lastError.message);
+      console.error(`[yt] attempt ${attemptIdx} error:`, lastError.message);
 
       const msg = lastError.message;
       const isLangError =
@@ -115,17 +118,12 @@ export async function getTranscript(url: string): Promise<TranscriptResult> {
           msg.includes("disabled") || msg.includes("Transcript is empty")
             ? "This video doesn't have captions available. Please try a different video."
             : `Could not fetch the transcript. ${msg}`;
-        console.error("[transcript] non-lang error, throwing:", wrapped);
         throw new Error(wrapped);
       }
-
-      console.log("[transcript] lang error, will retry with fallback");
     }
   }
 
   const finalMsg = lastError?.message ?? "";
-  console.error("[transcript] all attempts failed. last error:", finalMsg);
-
   if (
     finalMsg.includes("disabled") ||
     finalMsg.includes("not available") ||
