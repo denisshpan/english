@@ -6,6 +6,8 @@ export interface TranscriptResult {
   lang: string | null;
 }
 
+const CONSENT_COOKIE = "CONSENT=PENDING+987; SOCS=CAESEwgDEgk2NjIwNTc5NTQaAmVuIAEaBgiA_LyuBg";
+
 function buildTranscriptConfig(
   base: { lang?: string }
 ): Parameters<typeof YoutubeTranscript.fetchTranscript>[1] {
@@ -35,11 +37,21 @@ function buildTranscriptConfig(
           ...(lang && { "Accept-Language": lang }),
           ...(userAgent && { "User-Agent": userAgent }),
           ...headers,
+          Cookie: CONSENT_COOKIE,
         },
         body,
         dispatcher,
       } as RequestInit & { dispatcher?: typeof dispatcher });
-      console.log("[transcript] response:", res.status, res.statusText, `(${Date.now() - start}ms)`);
+
+      const cloned = res.clone();
+      const text = await cloned.text();
+      console.log("[transcript] response:", res.status, res.statusText, `(${Date.now() - start}ms)`, "body length:", text.length);
+      console.log("[transcript] body preview:", text.slice(0, 500));
+
+      const hasConsent = text.includes("consent.youtube.com") || text.includes("CONSENT");
+      const hasCaptions = text.includes("captionTrack") || text.includes("timedtext");
+      console.log("[transcript] consent page?", hasConsent, "| has captions?", hasCaptions);
+
       return res;
     } catch (fetchErr) {
       console.error("[transcript] fetch error:", fetchErr);
@@ -91,7 +103,6 @@ export async function getTranscript(url: string): Promise<TranscriptResult> {
     } catch (err: unknown) {
       lastError = err instanceof Error ? err : new Error("Unknown error fetching transcript.");
       console.error(`[transcript] attempt ${attemptIdx} error:`, lastError.message);
-      console.error("[transcript] error stack:", lastError.stack);
 
       const msg = lastError.message;
       const isLangError =
