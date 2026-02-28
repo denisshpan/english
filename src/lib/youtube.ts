@@ -15,54 +15,123 @@ type FetchParams = {
   headers?: Record<string, string>;
 };
 
-const WEB_USER_AGENT =
+const WEB_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
-function makeFetch(dispatcher?: ProxyAgent) {
-  return async (params: FetchParams) => {
-    const { url, lang, userAgent, method = "GET", headers = {} } = params;
-    let { body } = params;
+/**
+ * Creates videoFetch/playerFetch/transcriptFetch that share session state
+ * (cookies + visitorData) so the player API doesn't return LOGIN_REQUIRED.
+ */
+function makeSessionFetch(dispatcher?: ProxyAgent) {
+  let sessionCookies = "";
+  let visitorData = "";
 
-    // Rewrite ANDROID client → WEB to avoid LOGIN_REQUIRED
-    if (url.includes("/player") && body) {
-      try {
-        const parsed = JSON.parse(body);
-        if (parsed?.context?.client?.clientName === "ANDROID") {
-          parsed.context.client.clientName = "WEB";
-          parsed.context.client.clientVersion = "2.20260225.00.00";
-          body = JSON.stringify(parsed);
-          console.log("[yt] rewrote player client: ANDROID → WEB");
-        }
-      } catch { /* keep original body */ }
-    }
+  const doFetch = async (url: string, init: RequestInit & { dispatcher?: ProxyAgent }) => {
+    return fetch(url, init as RequestInit);
+  };
 
-    const fetchOpts: RequestInit & { dispatcher?: ProxyAgent } = {
+  const videoFetch = async (params: FetchParams) => {
+    const { url, lang, method = "GET", body, headers = {} } = params;
+    console.log("[yt] videoFetch:", url.slice(0, 100));
+
+    const res = await doFetch(url, {
       method,
       headers: {
+        "User-Agent": WEB_UA,
         ...(lang && { "Accept-Language": lang }),
-        "User-Agent": userAgent ?? WEB_USER_AGENT,
         ...headers,
       },
       body,
-    };
-    if (dispatcher) fetchOpts.dispatcher = dispatcher;
+      dispatcher,
+    });
 
-    console.log("[yt] fetch:", method, url.slice(0, 120));
-    const start = Date.now();
+    // Capture Set-Cookie for subsequent requests
+    const setCookies = res.headers.getSetCookie?.() ?? [];
+    sessionCookies = setCookies.map((c) => c.split(";")[0]).join("; ");
+    console.log("[yt] captured cookies:", sessionCookies.slice(0, 200));
 
-    const res = await fetch(url, fetchOpts as RequestInit);
+    // Extract visitorData from HTML
+    const cloned = res.clone();
+    const html = await cloned.text();
+    console.log("[yt] video page len:", html.length);
 
-    if (url.includes("/player")) {
-      const cloned = res.clone();
-      const text = await cloned.text();
-      console.log("[yt] player response:", res.status, `(${Date.now() - start}ms)`, "len:", text.length);
-      console.log("[yt] player body:", text.slice(0, 2000));
+    const vdMatch = html.match(/"visitorData"\s*:\s*"([^"]+)"/);
+    if (vdMatch) {
+      visitorData = vdMatch[1];
+      console.log("[yt] extracted visitorData:", visitorData.slice(0, 50));
     } else {
-      console.log("[yt] response:", res.status, `(${Date.now() - start}ms)`);
+      console.log("[yt] no visitorData found in page");
     }
+
+    // Check if page has captions embedded
+    const hasInitialPlayer = html.includes("ytInitialPlayerResponse");
+    const hasCaptions = html.includes("captionTracks") || html.includes("timedtext");
+    console.log("[yt] page has ytInitialPlayerResponse:", hasInitialPlayer, "| captions:", hasCaptions);
 
     return res;
   };
+
+  const playerFetch = async (params: FetchParams) => {
+    const { url, lang, method = "GET", headers = {} } = params;
+    let { body } = params;
+
+    // Rewrite client and inject visitorData
+    if (body) {
+      try {
+        const parsed = JSON.parse(body);
+        const client = parsed?.context?.client;
+        if (client) {
+          client.clientName = "WEB";
+          client.clientVersion = "2.20260225.00.00";
+          client.userAgent = WEB_UA;
+          if (visitorData) client.visitorData = visitorData;
+        }
+        body = JSON.stringify(parsed);
+        console.log("[yt] playerFetch body:", body.slice(0, 300));
+      } catch { /* keep original */ }
+    }
+
+    console.log("[yt] playerFetch:", method, url.slice(0, 100));
+    console.log("[yt] using cookies:", sessionCookies.slice(0, 200));
+
+    const res = await doFetch(url, {
+      method,
+      headers: {
+        "User-Agent": WEB_UA,
+        ...(lang && { "Accept-Language": lang }),
+        ...headers,
+        ...(sessionCookies && { Cookie: sessionCookies }),
+      },
+      body,
+      dispatcher,
+    });
+
+    const cloned = res.clone();
+    const text = await cloned.text();
+    console.log("[yt] player response:", res.status, "len:", text.length);
+    console.log("[yt] player body:", text.slice(0, 2000));
+
+    return res;
+  };
+
+  const transcriptFetch = async (params: FetchParams) => {
+    const { url, lang, method = "GET", body, headers = {} } = params;
+    console.log("[yt] transcriptFetch:", url.slice(0, 120));
+
+    return doFetch(url, {
+      method,
+      headers: {
+        "User-Agent": WEB_UA,
+        ...(lang && { "Accept-Language": lang }),
+        ...headers,
+        ...(sessionCookies && { Cookie: sessionCookies }),
+      },
+      body,
+      dispatcher,
+    });
+  };
+
+  return { videoFetch, playerFetch, transcriptFetch };
 }
 
 function buildTranscriptConfig(
@@ -72,14 +141,14 @@ function buildTranscriptConfig(
   console.log("[yt] proxy:", proxy ? "yes" : "no");
 
   const dispatcher = proxy ? new ProxyAgent(proxy) : undefined;
-  const fetchFn = makeFetch(dispatcher);
+  const { videoFetch, playerFetch, transcriptFetch } = makeSessionFetch(dispatcher);
 
   return {
     ...base,
-    userAgent: WEB_USER_AGENT,
-    videoFetch: fetchFn,
-    playerFetch: fetchFn,
-    transcriptFetch: fetchFn,
+    userAgent: WEB_UA,
+    videoFetch,
+    playerFetch,
+    transcriptFetch,
   };
 }
 
