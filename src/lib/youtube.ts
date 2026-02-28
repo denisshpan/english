@@ -6,14 +6,13 @@ export interface TranscriptResult {
   lang: string | null;
 }
 
-/**
- * When YOUTUBE_TRANSCRIPT_PROXY is set (e.g. on Vercel), routes all YouTube
- * requests through that proxy to bypass datacenter IP blocking.
- */
 function buildTranscriptConfig(
   base: { lang?: string }
 ): Parameters<typeof YoutubeTranscript.fetchTranscript>[1] {
   const proxy = process.env.YOUTUBE_TRANSCRIPT_PROXY;
+
+  console.log("[transcript] proxy configured:", proxy ? `yes (${proxy.replace(/:[^:@]+@/, ":***@")})` : "no");
+
   if (!proxy) return base;
 
   const dispatcher = new ProxyAgent(proxy);
@@ -27,16 +26,25 @@ function buildTranscriptConfig(
     headers?: Record<string, string>;
   }) => {
     const { url, lang, userAgent, method = "GET", body, headers = {} } = params;
-    return fetch(url, {
-      method,
-      headers: {
-        ...(lang && { "Accept-Language": lang }),
-        ...(userAgent && { "User-Agent": userAgent }),
-        ...headers,
-      },
-      body,
-      dispatcher,
-    } as RequestInit & { dispatcher?: typeof dispatcher });
+    console.log("[transcript] fetch via proxy:", method, url.slice(0, 120));
+    const start = Date.now();
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: {
+          ...(lang && { "Accept-Language": lang }),
+          ...(userAgent && { "User-Agent": userAgent }),
+          ...headers,
+        },
+        body,
+        dispatcher,
+      } as RequestInit & { dispatcher?: typeof dispatcher });
+      console.log("[transcript] response:", res.status, res.statusText, `(${Date.now() - start}ms)`);
+      return res;
+    } catch (fetchErr) {
+      console.error("[transcript] fetch error:", fetchErr);
+      throw fetchErr;
+    }
   };
 
   return {
@@ -48,26 +56,42 @@ function buildTranscriptConfig(
 }
 
 export async function getTranscript(url: string): Promise<TranscriptResult> {
+  console.log("[transcript] getTranscript called for:", url);
+
   const attempts = [
     buildTranscriptConfig({ lang: "en" }),
     buildTranscriptConfig({}),
   ];
 
   let lastError: Error | null = null;
+  let attemptIdx = 0;
 
   for (const opts of attempts) {
+    attemptIdx++;
+    console.log(`[transcript] attempt ${attemptIdx}/${attempts.length}, lang:`, (opts as { lang?: string }).lang ?? "any");
     try {
       const segments = await YoutubeTranscript.fetchTranscript(url, opts);
 
-      if (!segments || segments.length === 0) continue;
+      console.log("[transcript] segments received:", segments?.length ?? 0);
+
+      if (!segments || segments.length === 0) {
+        console.log("[transcript] no segments, trying next attempt");
+        continue;
+      }
 
       const text = segments.map((s) => s.text).join(" ");
-      if (!text.trim()) continue;
+      if (!text.trim()) {
+        console.log("[transcript] segments empty text, trying next attempt");
+        continue;
+      }
 
       const lang = segments[0]?.lang ?? null;
+      console.log("[transcript] success! lang:", lang, "chars:", text.length);
       return { text, lang };
     } catch (err: unknown) {
       lastError = err instanceof Error ? err : new Error("Unknown error fetching transcript.");
+      console.error(`[transcript] attempt ${attemptIdx} error:`, lastError.message);
+      console.error("[transcript] error stack:", lastError.stack);
 
       const msg = lastError.message;
       const isLangError =
@@ -76,16 +100,21 @@ export async function getTranscript(url: string): Promise<TranscriptResult> {
         msg.includes("Could not retrieve");
 
       if (!isLangError) {
-        throw new Error(
+        const wrapped =
           msg.includes("disabled") || msg.includes("Transcript is empty")
             ? "This video doesn't have captions available. Please try a different video."
-            : `Could not fetch the transcript. ${msg}`
-        );
+            : `Could not fetch the transcript. ${msg}`;
+        console.error("[transcript] non-lang error, throwing:", wrapped);
+        throw new Error(wrapped);
       }
+
+      console.log("[transcript] lang error, will retry with fallback");
     }
   }
 
   const finalMsg = lastError?.message ?? "";
+  console.error("[transcript] all attempts failed. last error:", finalMsg);
+
   if (
     finalMsg.includes("disabled") ||
     finalMsg.includes("not available") ||
