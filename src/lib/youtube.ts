@@ -6,74 +6,80 @@ export interface TranscriptResult {
   lang: string | null;
 }
 
-const CONSENT_COOKIE = "CONSENT=PENDING+987; SOCS=CAESEwgDEgk2NjIwNTc5NTQaAmVuIAEaBgiA_LyuBg";
+type FetchParams = {
+  url: string;
+  lang?: string;
+  userAgent?: string;
+  method?: string;
+  body?: string;
+  headers?: Record<string, string>;
+};
+
+const WEB_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+function makeFetch(dispatcher?: ProxyAgent) {
+  return async (params: FetchParams) => {
+    const { url, lang, userAgent, method = "GET", headers = {} } = params;
+    let { body } = params;
+
+    // Rewrite ANDROID client → WEB to avoid LOGIN_REQUIRED
+    if (url.includes("/player") && body) {
+      try {
+        const parsed = JSON.parse(body);
+        if (parsed?.context?.client?.clientName === "ANDROID") {
+          parsed.context.client.clientName = "WEB";
+          parsed.context.client.clientVersion = "2.20260225.00.00";
+          body = JSON.stringify(parsed);
+          console.log("[yt] rewrote player client: ANDROID → WEB");
+        }
+      } catch { /* keep original body */ }
+    }
+
+    const fetchOpts: RequestInit & { dispatcher?: ProxyAgent } = {
+      method,
+      headers: {
+        ...(lang && { "Accept-Language": lang }),
+        "User-Agent": userAgent ?? WEB_USER_AGENT,
+        ...headers,
+      },
+      body,
+    };
+    if (dispatcher) fetchOpts.dispatcher = dispatcher;
+
+    console.log("[yt] fetch:", method, url.slice(0, 120));
+    const start = Date.now();
+
+    const res = await fetch(url, fetchOpts as RequestInit);
+
+    if (url.includes("/player")) {
+      const cloned = res.clone();
+      const text = await cloned.text();
+      console.log("[yt] player response:", res.status, `(${Date.now() - start}ms)`, "len:", text.length);
+      console.log("[yt] player body:", text.slice(0, 2000));
+    } else {
+      console.log("[yt] response:", res.status, `(${Date.now() - start}ms)`);
+    }
+
+    return res;
+  };
+}
 
 function buildTranscriptConfig(
   base: { lang?: string }
 ): Parameters<typeof YoutubeTranscript.fetchTranscript>[1] {
   const proxy = process.env.YOUTUBE_TRANSCRIPT_PROXY;
+  console.log("[yt] proxy:", proxy ? "yes" : "no");
 
-  console.log("[yt] proxy:", proxy ? `yes (${proxy.replace(/:[^:@]+@/, ":***@")})` : "no");
-
-  if (!proxy) return base;
-
-  const dispatcher = new ProxyAgent(proxy);
-
-  const commonFetch = async (params: {
-    url: string;
-    lang?: string;
-    userAgent?: string;
-    method?: string;
-    body?: string;
-    headers?: Record<string, string>;
-  }) => {
-    const { url, lang, userAgent, method = "GET", body, headers = {} } = params;
-    const isPlayer = url.includes("/player");
-    console.log("[yt] fetch:", method, url.slice(0, 120));
-
-    if (isPlayer && body) {
-      console.log("[yt] player POST body:", body.slice(0, 1000));
-    }
-
-    const start = Date.now();
-    try {
-      const res = await fetch(url, {
-        method,
-        headers: {
-          ...(lang && { "Accept-Language": lang }),
-          ...(userAgent && { "User-Agent": userAgent }),
-          ...headers,
-          Cookie: CONSENT_COOKIE,
-        },
-        body,
-        dispatcher,
-      } as RequestInit & { dispatcher?: typeof dispatcher });
-
-      const cloned = res.clone();
-      const text = await cloned.text();
-      const ms = Date.now() - start;
-      console.log("[yt] response:", res.status, `(${ms}ms)`, "len:", text.length);
-
-      if (isPlayer) {
-        console.log("[yt] FULL player response:", text);
-      } else {
-        const hasCaptions = text.includes("captionTrack") || text.includes("timedtext");
-        console.log("[yt] video page has captions?", hasCaptions);
-        console.log("[yt] video page preview:", text.slice(0, 300));
-      }
-
-      return res;
-    } catch (fetchErr) {
-      console.error("[yt] fetch error:", fetchErr);
-      throw fetchErr;
-    }
-  };
+  const dispatcher = proxy ? new ProxyAgent(proxy) : undefined;
+  const fetchFn = makeFetch(dispatcher);
 
   return {
     ...base,
-    videoFetch: commonFetch,
-    playerFetch: commonFetch,
-    transcriptFetch: commonFetch,
+    userAgent: WEB_USER_AGENT,
+    videoFetch: fetchFn,
+    playerFetch: fetchFn,
+    transcriptFetch: fetchFn,
   };
 }
 
@@ -90,7 +96,7 @@ export async function getTranscript(url: string): Promise<TranscriptResult> {
 
   for (const opts of attempts) {
     attemptIdx++;
-    console.log(`[yt] attempt ${attemptIdx}/${attempts.length}, lang:`, (opts as { lang?: string }).lang ?? "any");
+    console.log(`[yt] attempt ${attemptIdx}/${attempts.length}`);
     try {
       const segments = await YoutubeTranscript.fetchTranscript(url, opts);
       console.log("[yt] segments:", segments?.length ?? 0);
@@ -114,11 +120,11 @@ export async function getTranscript(url: string): Promise<TranscriptResult> {
         msg.includes("Could not retrieve");
 
       if (!isLangError) {
-        const wrapped =
+        throw new Error(
           msg.includes("disabled") || msg.includes("Transcript is empty")
             ? "This video doesn't have captions available. Please try a different video."
-            : `Could not fetch the transcript. ${msg}`;
-        throw new Error(wrapped);
+            : `Could not fetch the transcript. ${msg}`
+        );
       }
     }
   }
