@@ -7,9 +7,8 @@ export interface TranscriptResult {
 }
 
 /**
- * Build fetch options for youtube-transcript-plus.
- * When YOUTUBE_TRANSCRIPT_PROXY is set (e.g. on Vercel), uses that proxy to
- * bypass YouTube's blocking of datacenter IPs.
+ * When YOUTUBE_TRANSCRIPT_PROXY is set (e.g. on Vercel), routes all YouTube
+ * requests through that proxy to bypass datacenter IP blocking.
  */
 function buildTranscriptConfig(
   base: { lang?: string }
@@ -20,26 +19,25 @@ function buildTranscriptConfig(
   const dispatcher = new ProxyAgent(proxy);
 
   const commonFetch = async (params: {
-      url: string;
-      lang?: string;
-      userAgent?: string;
-      method?: string;
-      body?: string;
-      headers?: Record<string, string>;
-    }) => {
-      const { url, lang, userAgent, method = "GET", body, headers = {} } = params;
-      return fetch(url, {
-        method,
-        headers: {
-          ...(lang && { "Accept-Language": lang }),
-          ...(userAgent && { "User-Agent": userAgent }),
-          ...headers,
-        },
-        body,
-        // Node fetch (undici) accepts dispatcher for proxy
-        dispatcher,
-      } as RequestInit & { dispatcher?: typeof dispatcher });
-    };
+    url: string;
+    lang?: string;
+    userAgent?: string;
+    method?: string;
+    body?: string;
+    headers?: Record<string, string>;
+  }) => {
+    const { url, lang, userAgent, method = "GET", body, headers = {} } = params;
+    return fetch(url, {
+      method,
+      headers: {
+        ...(lang && { "Accept-Language": lang }),
+        ...(userAgent && { "User-Agent": userAgent }),
+        ...headers,
+      },
+      body,
+      dispatcher,
+    } as RequestInit & { dispatcher?: typeof dispatcher });
+  };
 
   return {
     ...base,
@@ -50,7 +48,6 @@ function buildTranscriptConfig(
 }
 
 export async function getTranscript(url: string): Promise<TranscriptResult> {
-  // Try English first, then fall back to any available language.
   const attempts = [
     buildTranscriptConfig({ lang: "en" }),
     buildTranscriptConfig({}),
@@ -72,7 +69,6 @@ export async function getTranscript(url: string): Promise<TranscriptResult> {
     } catch (err: unknown) {
       lastError = err instanceof Error ? err : new Error("Unknown error fetching transcript.");
 
-      // Only retry on "language not available" errors; propagate everything else immediately.
       const msg = lastError.message;
       const isLangError =
         msg.includes("No transcripts are available in") ||
@@ -89,7 +85,6 @@ export async function getTranscript(url: string): Promise<TranscriptResult> {
     }
   }
 
-  // Both attempts failed — captions are entirely missing or disabled.
   const finalMsg = lastError?.message ?? "";
   if (
     finalMsg.includes("disabled") ||
